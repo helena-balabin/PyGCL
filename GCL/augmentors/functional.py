@@ -1,15 +1,14 @@
 import torch
 import networkx as nx
+import random
 import torch.nn.functional as F
 
 from typing import Optional
 from GCL.utils import normalize
-from torch_sparse import SparseTensor, coalesce
-from torch_scatter import scatter
 from torch_geometric.transforms import GDC
 from torch.distributions import Uniform, Beta
-from torch_geometric.utils import dropout_adj, to_networkx, to_undirected, degree, to_scipy_sparse_matrix, \
-    from_scipy_sparse_matrix, sort_edge_index, add_self_loops, subgraph
+from torch_geometric.utils import dropout_edge, to_networkx, to_undirected, degree, to_scipy_sparse_matrix, \
+    from_scipy_sparse_matrix, sort_edge_index, add_self_loops, subgraph, coalesce
 from torch.distributions.bernoulli import Bernoulli
 
 
@@ -106,7 +105,7 @@ class AugmentTopologyAttributes(object):
         self.pf = pf
 
     def __call__(self, x, edge_index):
-        edge_index = dropout_adj(edge_index, p=self.pe)[0]
+        edge_index, _ = dropout_edge(edge_index, p=self.pe)
         x = drop_feature(x, self.pf)
         return x, edge_index
 
@@ -166,7 +165,8 @@ def get_pagerank_weights(data, aggr: str = 'sink', k: int = 10):
 
         for i in range(k):
             edge_msg = x[edge_index[0]] / deg_out[edge_index[0]]
-            agg_msg = scatter(edge_msg, edge_index[1], reduce='sum')
+            agg_msg = torch.zeros(num_nodes, device=edge_index.device, dtype=torch.float32)
+            agg_msg.scatter_add_(0, edge_index[1], edge_msg)
 
             x = (1 - damp) * x + damp * agg_msg
 
@@ -313,7 +313,10 @@ def drop_node(edge_index: torch.Tensor, edge_weight: Optional[torch.Tensor] = No
     dist = Bernoulli(probs)
 
     subset = dist.sample().to(torch.bool).to(edge_index.device)
-    edge_index, edge_weight = subgraph(subset, edge_index, edge_weight)
+    if edge_weight is not None:
+        edge_index, edge_weight = subgraph(subset, edge_index, edge_weight)
+    else:
+        edge_index = subgraph(subset, edge_index)
 
     return edge_index, edge_weight
 
@@ -321,12 +324,29 @@ def drop_node(edge_index: torch.Tensor, edge_weight: Optional[torch.Tensor] = No
 def random_walk_subgraph(edge_index: torch.LongTensor, edge_weight: Optional[torch.FloatTensor] = None, batch_size: int = 1000, length: int = 10):
     num_nodes = edge_index.max().item() + 1
 
-    row, col = edge_index
-    adj = SparseTensor(row=row, col=col, sparse_sizes=(num_nodes, num_nodes))
+    # Fallback to networkx for random walk if torch_cluster/torch_sparse is not available
+    # This is slower but removes dependency
+    g = nx.Graph()
+    g.add_nodes_from(range(num_nodes))
+    g.add_edges_from(edge_index.t().tolist())
+    
+    start_nodes = torch.randint(0, num_nodes, size=(batch_size, ), dtype=torch.long).tolist()
+    node_idx = set()
+    for start_node in start_nodes:
+        curr = start_node
+        node_idx.add(curr)
+        for _ in range(length):
+            neighbors = list(g.neighbors(curr))
+            if len(neighbors) == 0:
+                break
+            curr = random.choice(neighbors)
+            node_idx.add(curr)
+            
+    node_idx = torch.tensor(list(node_idx), dtype=torch.long, device=edge_index.device)
 
-    start = torch.randint(0, num_nodes, size=(batch_size, ), dtype=torch.long).to(edge_index.device)
-    node_idx = adj.random_walk(start.flatten(), length).view(-1)
-
-    edge_index, edge_weight = subgraph(node_idx, edge_index, edge_weight)
+    if edge_weight is not None:
+        edge_index, edge_weight = subgraph(node_idx, edge_index, edge_weight)
+    else:
+        edge_index = subgraph(node_idx, edge_index)
 
     return edge_index, edge_weight

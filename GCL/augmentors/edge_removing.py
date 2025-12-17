@@ -1,5 +1,5 @@
 from GCL.augmentors.augmentor import Graph, Augmentor
-from GCL.augmentors.functional import dropout_adj
+from GCL.augmentors.functional import dropout_edge
 
 
 class EdgeRemoving(Augmentor):
@@ -9,5 +9,7 @@ class EdgeRemoving(Augmentor):
 
     def augment(self, g: Graph) -> Graph:
         x, edge_index, edge_weights = g.unfold()
-        edge_index, edge_weights = dropout_adj(edge_index, edge_attr=edge_weights, p=self.pe)
+        edge_index, edge_mask = dropout_edge(edge_index, p=self.pe)
+        if edge_weights is not None:
+            edge_weights = edge_weights[edge_mask]
         return Graph(x=x, edge_index=edge_index, edge_weights=edge_weights)

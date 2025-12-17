@@ -1,6 +1,6 @@
 import torch
+import torch.nn.functional as F
 from abc import ABC, abstractmethod
-from torch_scatter import scatter
 
 
 class Sampler(ABC):
@@ -61,8 +61,7 @@ class CrossScaleSampler(Sampler):
         else:
             assert batch is not None
             if use_gpu:
-                ones = torch.eye(num_nodes, dtype=torch.float32, device=device)     # N * N
-                pos_mask = scatter(ones, batch, dim=0, reduce='sum')                # M * N
+                pos_mask = F.one_hot(batch, num_classes=num_graphs).t().float()     # M * N
             else:
                 pos_mask = torch.zeros((num_graphs, num_nodes), dtype=torch.float32).to(device)
                 for node_idx, graph_idx in enumerate(batch):
