@@ -324,7 +324,8 @@ def drop_node(edge_index: torch.Tensor, edge_weight: Optional[torch.Tensor] = No
 def random_walk_subgraph(edge_index: torch.LongTensor, edge_weight: Optional[torch.FloatTensor] = None, batch_size: int = 1000, length: int = 10):
     num_nodes = edge_index.max().item() + 1
 
-    # Fallback to networkx for random walk if torch_cluster/torch_sparse is not available
+    # Fallback to networkx for random walk if torch_cluster/
+    # arse is not available
     # This is slower but removes dependency
     g = nx.Graph()
     g.add_nodes_from(range(num_nodes))
